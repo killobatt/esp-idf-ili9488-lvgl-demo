@@ -1,0 +1,29 @@
+{
+    "C_Cpp.intelliSenseEngine": "default",
+    "idf.adapterTargetName": "esp32s3",
+    "idf.customExtraPaths": "/Users/killobatt/Projects/killobatt/esp-32/.espressif/tools/xtensa-esp-elf-gdb/12.1_20231023/xtensa-esp-elf-gdb/bin:/Users/killobatt/Projects/killobatt/esp-32/.espressif/tools/riscv32-esp-elf-gdb/12.1_20231023/riscv32-esp-elf-gdb/bin:/Users/killobatt/Projects/killobatt/esp-32/.espressif/tools/xtensa-esp-elf/esp-13.2.0_20230928/xtensa-esp-elf/bin:/Users/killobatt/Projects/killobatt/esp-32/.espressif/tools/riscv32-esp-elf/esp-13.2.0_20230928/riscv32-esp-elf/bin:/Users/killobatt/Projects/killobatt/esp-32/.espressif/tools/esp32ulp-elf/2.35_20220830/esp32ulp-elf/bin:/Users/killobatt/Projects/killobatt/esp-32/.espressif/tools/openocd-esp32/v0.12.0-esp32-20230921/openocd-esp32/bin:/Users/killobatt/Projects/killobatt/esp-32/.espressif/tools/esp-rom-elfs/20230320",
+    "idf.customExtraVars": {
+        "OPENOCD_SCRIPTS": "/Users/killobatt/Projects/killobatt/esp-32/.espressif/tools/openocd-esp32/v0.12.0-esp32-20230921/openocd-esp32/share/openocd/scripts",
+        "ESP_ROM_ELF_DIR": "/Users/killobatt/Projects/killobatt/esp-32/.espressif/tools/esp-rom-elfs/20230320/"
+    },
+    "idf.espIdfPath": "/Users/killobatt/esp/v5.2.1/esp-idf",
+    "idf.openOcdConfigs": [
+        "board/esp32s3-builtin.cfg"
+    ],
+    "idf.port": "/dev/cu.usbserial-0001",
+    "idf.pythonBinPath": "/Users/killobatt/Projects/killobatt/esp-32/.espressif/python_env/idf5.2_py3.12_env/bin/python",
+    "idf.toolsPath": "/Users/killobatt/Projects/killobatt/esp-32/.espressif",
+    "files.associations": {
+        "regex": "c",
+        "task.h": "c",
+        "esp_err.h": "c",
+        "lvgl.h": "c",
+        "lv_calendar.h": "c",
+        "lv_binfont_loader.h": "c",
+        "lv_display.h": "c",
+        "lv_array.h": "c",
+        "lv_font.h": "c",
+        "cstdint": "c"
+    },
+    "idf.flashType": "UART"
+}

@@ -1,0 +1,21 @@
+dependencies:
+  atanisoft/esp_lcd_ili9488:
+    component_hash: 828cc2277e57298c2d35f5179d746aa6771f539c4c6d5663920505d52ddbe3a0
+    source:
+      service_url: https://api.components.espressif.com/
+      type: service
+    version: 1.0.9
+  idf:
+    component_hash: null
+    source:
+      type: idf
+    version: 5.2.1
+  lvgl/lvgl:
+    component_hash: 2a8f619b5c2b1c7ad116c33d43dae8989c76739068f406a7e8ba9221e1085f17
+    source:
+      service_url: https://api.components.espressif.com/
+      type: service
+    version: 9.1.0
+manifest_hash: 3dfc6b657c0177eb0685c3df263f1e5f099a7bdb0c61b864e67fa7044a7602e0
+target: esp32s3
+version: 1.0.0
