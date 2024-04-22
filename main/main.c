@@ -11,11 +11,16 @@
 #include "lvgl.h"
 
 #include "esp_err.h"
+#include "esp_check.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_event.h"
+#include "esp_wifi.h"
+#include "nvs_flash.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "main";
 
@@ -25,7 +30,7 @@ static const gpio_num_t CONFIG_TFT_SPI_MOSI = GPIO_NUM_10;
 static const gpio_num_t CONFIG_TFT_SPI_CLOCK = GPIO_NUM_11;
 static const gpio_num_t CONFIG_TFT_BACKLIGHT_PIN = GPIO_NUM_12;
 static const gpio_num_t CONFIG_TFT_SPI_MISO = GPIO_NUM_13;
-static const gpio_num_t CONFIG_TFT_RESET = 46;
+static const gpio_num_t CONFIG_TFT_RESET = GPIO_NUM_18;
 
 static const ledc_mode_t BACKLIGHT_LEDC_MODE = LEDC_LOW_SPEED_MODE;
 static const ledc_channel_t BACKLIGHT_LEDC_CHANNEL = LEDC_CHANNEL_0;
@@ -41,11 +46,15 @@ static const unsigned int DISPLAY_REFRESH_HZ = 40000000;
 static const int DISPLAY_SPI_QUEUE_LEN = 10;
 static const int SPI_MAX_TRANSFER_SIZE = 32768;
 
-static const size_t LV_BUFFER_SIZE = DISPLAY_HORIZONTAL_PIXELS * 100;
+static const size_t LV_BUFFER_SIZE = DISPLAY_HORIZONTAL_PIXELS * 50;
 static const int LVGL_UPDATE_PERIOD_MS = 5;
 
 #define CONFIG_DISPLAY_COLOR_MODE 0 // 0 for RGB, 1 for BGR
-#define USE_DOUBLE_BUFFERING 1
+#define USE_DOUBLE_BUFFERING 0
+#define WIFI_SCAN_MAX_AP 20
+
+// LVGL is not thread safe, hence we need allow access to its APIs from one task at a time
+SemaphoreHandle_t lvgl_mutex;
 
 static esp_lcd_panel_io_handle_t lcd_io_handle = NULL;
 static esp_lcd_panel_handle_t lcd_handle = NULL;
@@ -61,6 +70,21 @@ static lv_color_t *lv_buf_1 = NULL;
 static lv_color_t *lv_buf_2 = NULL;
 static lv_obj_t *meter = NULL;
 static lv_style_t style_screen;
+
+void print_free_mem(const char *point) {
+    ESP_LOGI(TAG, "%s xPortGetFreeHeapSize %d = DRAM", point, xPortGetFreeHeapSize());
+
+    int DRam = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    int IRam = heap_caps_get_free_size(MALLOC_CAP_32BIT) - heap_caps_get_free_size(MALLOC_CAP_8BIT);
+
+    ESP_LOGI(TAG, "%s DRAM \t\t %d", point, DRam);
+    ESP_LOGI(TAG, "%s IRam \t\t %d", point, IRam);
+    int free = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    ESP_LOGI(TAG, "%s largest free block = %d", point, free);
+
+    int stackmem = uxTaskGetStackHighWaterMark(NULL);
+    ESP_LOGI(TAG, "%s stack space = %d", point, stackmem);
+}
 
 static void set_angle(void * obj, int32_t v) {
     lv_arc_set_value(obj, v);
@@ -193,7 +217,7 @@ void initialize_display() {
     ESP_ERROR_CHECK(esp_lcd_panel_init(lcd_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_invert_color(lcd_handle, false));
     ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(lcd_handle, false));
-    ESP_ERROR_CHECK(esp_lcd_panel_mirror(lcd_handle, true, false));
+    ESP_ERROR_CHECK(esp_lcd_panel_mirror(lcd_handle, true, true)); // false false -> normal vertical, true true - upside down vertical
     ESP_ERROR_CHECK(esp_lcd_panel_set_gap(lcd_handle, 0, 0));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(lcd_handle, true));
 }
@@ -224,15 +248,20 @@ void initialize_lvgl() {
     ESP_ERROR_CHECK(esp_timer_start_periodic(lvgl_tick_timer, LVGL_UPDATE_PERIOD_MS * 1000));
 }
 
-void create_demo_ui() {
+void create_scanning_progress_screen() {
+    // if (!xSemaphoreTake(lvgl_mutex, pdMS_TO_TICKS(1000))) {
+    //     ESP_LOGE(TAG, "Timed out taking semaphore for initial UI creation");
+    //     return;
+    // }
     lv_obj_t *scr = lv_disp_get_scr_act(NULL);
 
     // Set the background color of the display to black.
     lv_style_init(&style_screen);
     lv_style_set_bg_color(&style_screen, lv_color_black());
+    lv_style_set_text_color(&style_screen, lv_color_hex(0xFFFFFF));
     lv_obj_add_style(lv_scr_act(), &style_screen, LV_STATE_DEFAULT);
 
-        /*Create an Arc*/
+    /*Create an Arc*/
     lv_obj_t * arc = lv_arc_create(lv_screen_active());
     lv_arc_set_rotation(arc, 270);
     lv_arc_set_bg_angles(arc, 0, 360);
@@ -249,22 +278,155 @@ void create_demo_ui() {
     lv_anim_set_repeat_delay(&a, 500);
     lv_anim_set_values(&a, 0, 100);
     lv_anim_start(&a);
+
+    lv_obj_t *label = lv_label_create(scr);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(label, "Scanning WiFi Networks");
+    lv_obj_align(label, LV_ALIGN_CENTER, 0, 100);
+
+    // xSemaphoreGive(lvgl_mutex);
+}
+
+void create_wifi_ap_list_screen(wifi_ap_record_t *wifi_records, uint16_t wifi_records_count) {
+    // if (!xSemaphoreTake(lvgl_mutex, pdMS_TO_TICKS(1000))) {
+    //     ESP_LOGE(TAG, "Timed out taking semaphore for initial UI creation");
+    //     return;
+    // }
+
+    lv_obj_t *scr = lv_obj_create(NULL);
+
+    lv_obj_t *list = lv_list_create(scr);
+    lv_obj_align(list, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    for (uint16_t record_index = 0; record_index < wifi_records_count; record_index++) {
+        wifi_ap_record_t record = wifi_records[record_index];
+
+        char ssid[33];
+        sprintf(ssid, "%32s", (char *)record.ssid);
+        lv_list_add_button(list, LV_SYMBOL_WIFI, ssid);
+    }
+
+    lv_screen_load_anim(scr, LV_SCR_LOAD_ANIM_OVER_BOTTOM, 1000, 0, true);
+
+    // xSemaphoreGive(lvgl_mutex);
+}
+
+void lvgl_task(void *params) {
+    // if (xSemaphoreTake(lvgl_mutex, pdMS_TO_TICKS(1000))) {
+        print_free_mem("LVGL TASK BEFORE INIT");
+
+        initialize_lvgl();        
+        // xSemaphoreGive(lvgl_mutex);
+
+        create_scanning_progress_screen();
+        display_brightness_set(100);
+
+        print_free_mem("LVGL TASK AFTER INIT");
+    // } else {
+    //     ESP_LOGE(TAG, "Hanging on lvgl_mutext timed out");
+    // }
+
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        // if (xSemaphoreTake(lvgl_mutex, pdMS_TO_TICKS(1000))) {
+            // print_free_mem("LVGL BEFORE TIMER");
+            lv_timer_handler();
+            // print_free_mem("LVGL AFTER TIMER");
+        //     xSemaphoreGive(lvgl_mutex);
+        // } else {
+        //     ESP_LOGE(TAG, "Hanging on lvgl_mutext timed out");
+        // }
+    }
+}
+
+esp_err_t scan_wifi_networks(uint16_t *number, wifi_ap_record_t *ap_records) {
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
+    assert(sta_netif);
+
+    ESP_LOGI(TAG, "WiFi init");
+    wifi_init_config_t wifi_init_config = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_RETURN_ON_ERROR(esp_wifi_init(&wifi_init_config), TAG, "WiFi init");
+
+    ESP_LOGI(TAG, "WiFi Set Mode Station");
+    ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), TAG, "WiFi Set Mode Station");
+
+    ESP_LOGI(TAG, "WiFi start");
+    ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "WiFi start");
+
+    ESP_LOGI(TAG, "WiFi Scan start");
+    ESP_RETURN_ON_ERROR(esp_wifi_scan_start(NULL, true), TAG, "WiFi Scan start");
+
+    ESP_LOGI(TAG, "esp_wifi_scan_get_ap_records");
+    ESP_RETURN_ON_ERROR(esp_wifi_scan_get_ap_records(number, ap_records), TAG, "Scan error");
+
+    return ESP_OK;
+}
+
+void wifi_scan_task(void *params) {
+    // Emulating process until I find out why ESP32S3 does not go beyond ESP_WIFI_START();
+    vTaskDelay(pdMS_TO_TICKS(2000));
+
+    const uint8_t fake_record_count = 8;
+    wifi_ap_record_t fake_wifi_records[fake_record_count];
+    memset(fake_wifi_records, 0x00, sizeof(wifi_ap_record_t) * fake_record_count);
+    for (int i = 0; i < fake_record_count; i++) {
+        strcpy((char *)fake_wifi_records[i].ssid, "WiFi Point");
+        fake_wifi_records[i].rssi = -55 - i;
+    }
+    create_wifi_ap_list_screen(fake_wifi_records, fake_record_count);
+
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    // End emulating
+
+    print_free_mem("WiFi BEFORE Scan");
+    wifi_ap_record_t wifi_records[WIFI_SCAN_MAX_AP];
+    uint16_t max_record = WIFI_SCAN_MAX_AP;
+    ESP_ERROR_CHECK(scan_wifi_networks(&max_record, wifi_records));
+
+    for (int i = 0; i < max_record; i++) {
+        ESP_LOGI(TAG, "SSID \t\t%s", wifi_records[i].ssid);
+        ESP_LOGI(TAG, "RSSI \t\t%d", wifi_records[i].rssi);
+        ESP_LOGI(TAG, "Channel \t\t%d", wifi_records[i].primary);
+    }
+
+    create_wifi_ap_list_screen(wifi_records, max_record);
+
+    print_free_mem("WiFi AFTER Scan");
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
+void initialize_nvs() {
+    nvs_flash_erase();
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK( ret );
 }
 
 void app_main(void) {
+    print_free_mem("MAIN START");
+    initialize_nvs();
+    lvgl_mutex = xSemaphoreCreateMutex();
+
     display_brightness_init();
     display_brightness_set(0);
 
     initialize_spi();
     initialize_display();
 
-    initialize_lvgl();
-    create_demo_ui();
-
-    display_brightness_set(100);
+    lvgl_task(NULL);
+    // xTaskCreate(&lvgl_task, "LVGL Task", 50 * 1024, NULL, 0, NULL);
+    // xTaskCreate(&wifi_scan_task, "WiFi Scan Task", 10 * 1024, NULL, 1, NULL);
 
     while (true) {
-        vTaskDelay(pdMS_TO_TICKS(10));
-        lv_timer_handler();
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

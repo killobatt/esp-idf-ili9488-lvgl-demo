@@ -8,7 +8,8 @@
     },
     "idf.espIdfPath": "/Users/killobatt/esp/v5.2.1/esp-idf",
     "idf.openOcdConfigs": [
-        "board/esp32s3-builtin.cfg"
+        "interface/ftdi/esp32_devkitj_v1.cfg",
+        "target/esp32s3.cfg"
     ],
     "idf.port": "/dev/cu.usbserial-0001",
     "idf.pythonBinPath": "/Users/killobatt/Projects/killobatt/esp-32/.espressif/python_env/idf5.2_py3.12_env/bin/python",
@@ -23,7 +24,11 @@
         "lv_display.h": "c",
         "lv_array.h": "c",
         "lv_font.h": "c",
-        "cstdint": "c"
+        "cstdint": "c",
+        "spi_master.h": "c",
+        "*.tcc": "c",
+        "format": "c",
+        "sdkconfig.h": "c"
     },
     "idf.flashType": "UART"
 }
