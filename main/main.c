@@ -13,6 +13,10 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_check.h"
+#include "esp_event.h"
+#include "esp_wifi.h"
+#include "nvs_flash.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -46,6 +50,8 @@ static const int LVGL_UPDATE_PERIOD_MS = 5;
 
 #define CONFIG_DISPLAY_COLOR_MODE 0 // 0 for RGB, 1 for BGR
 #define USE_DOUBLE_BUFFERING 1
+
+#define WIFI_SCAN_MAX_AP 20
 
 static SemaphoreHandle_t lvgl_mutex;
 
@@ -276,7 +282,6 @@ static void lvgl_ui_task(void *params) {
             vTaskDelay(pdMS_TO_TICKS(10));
             if (pdTRUE == xSemaphoreTake(lvgl_mutex, 100)) {
                 lv_timer_handler();
-                
                 xSemaphoreGive(lvgl_mutex);
             } else {
                 ESP_LOGE(TAG, "Could not take lvgl_mutex for timer");
@@ -288,8 +293,103 @@ static void lvgl_ui_task(void *params) {
     }
 }
 
+typedef struct {
+    wifi_ap_record_t *wifi_records;
+    uint16_t wifi_records_count;
+} wifi_scan_result_t;
+
+void create_wifi_ap_list_screen() {
+    // if (!xSemaphoreTake(lvgl_mutex, pdMS_TO_TICKS(1000))) {
+    //     ESP_LOGE(TAG, "Timed out taking semaphore for initial UI creation");
+    //     return;
+    // }
+
+    // Fake it till you make it
+    const uint8_t wifi_records_count = 8;
+    wifi_ap_record_t wifi_records[wifi_records_count];
+    memset(wifi_records, 0x00, sizeof(wifi_ap_record_t) * wifi_records_count);
+    for (int i = 0; i < wifi_records_count; i++) {
+        strcpy((char *)wifi_records[i].ssid, "WiFi Point");
+        wifi_records[i].rssi = -55 - i;
+    }
+
+    // end faking
+
+    lv_obj_t *scr = lv_obj_create(NULL);
+
+    lv_obj_t *list = lv_list_create(scr);
+    lv_obj_align(list, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    for (uint16_t record_index = 0; record_index < wifi_records_count; record_index++) {
+        wifi_ap_record_t record = wifi_records[record_index];
+
+        char ssid[33];
+        sprintf(ssid, "%32s", (char *)record.ssid);
+        lv_list_add_button(list, LV_SYMBOL_WIFI, ssid);
+    }
+
+    lv_screen_load_anim(scr, LV_SCR_LOAD_ANIM_OVER_BOTTOM, 1000, 0, true);
+
+    // xSemaphoreGive(lvgl_mutex);
+}
+
+esp_err_t scan_wifi_networks(uint16_t *number, wifi_ap_record_t *ap_records) {
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
+    assert(sta_netif);
+
+    ESP_LOGI(TAG, "WiFi init");
+    wifi_init_config_t wifi_init_config = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_RETURN_ON_ERROR(esp_wifi_init(&wifi_init_config), TAG, "WiFi init");
+
+    ESP_LOGI(TAG, "WiFi Set Mode Station");
+    ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), TAG, "WiFi Set Mode Station");
+
+    ESP_LOGI(TAG, "WiFi start");
+    ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "WiFi start");
+
+    ESP_LOGI(TAG, "WiFi Scan start");
+    ESP_RETURN_ON_ERROR(esp_wifi_scan_start(NULL, true), TAG, "WiFi Scan start");
+
+    ESP_LOGI(TAG, "esp_wifi_scan_get_ap_records");
+    ESP_RETURN_ON_ERROR(esp_wifi_scan_get_ap_records(number, ap_records), TAG, "Scan error");
+
+    return ESP_OK;
+}
+
+void wifi_scan_task(void *params) {
+    // Emulating process until I find out why ESP32S3 does not go beyond ESP_WIFI_START();
+    vTaskDelay(pdMS_TO_TICKS(4000));
+
+    lv_async_call(create_wifi_ap_list_screen, NULL);
+
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    // End emulating
+
+    wifi_ap_record_t wifi_records[WIFI_SCAN_MAX_AP];
+    uint16_t max_record = WIFI_SCAN_MAX_AP;
+    ESP_ERROR_CHECK(scan_wifi_networks(&max_record, wifi_records));
+
+    for (int i = 0; i < max_record; i++) {
+        ESP_LOGI(TAG, "SSID \t\t%s", wifi_records[i].ssid);
+        ESP_LOGI(TAG, "RSSI \t\t%d", wifi_records[i].rssi);
+        ESP_LOGI(TAG, "Channel \t\t%d", wifi_records[i].primary);
+    }
+
+    create_wifi_ap_list_screen(wifi_records, max_record);
+
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
+
 void app_main(void) {
     lvgl_mutex = xSemaphoreCreateMutex();
 
     xTaskCreate(lvgl_ui_task, "LVGL UI", 50 * 1024, NULL, tskIDLE_PRIORITY, NULL);
+    xTaskCreate(wifi_scan_task, "WiFi Scan", 2 * 1024, NULL, tskIDLE_PRIORITY, NULL);
 }
