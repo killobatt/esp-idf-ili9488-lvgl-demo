@@ -23,7 +23,8 @@
         "lv_display.h": "c",
         "lv_array.h": "c",
         "lv_font.h": "c",
-        "cstdint": "c"
+        "cstdint": "c",
+        "esp_wifi.h": "c"
     },
     "idf.flashType": "UART"
 }
