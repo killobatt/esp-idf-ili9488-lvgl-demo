@@ -25,7 +25,7 @@ static const gpio_num_t CONFIG_TFT_SPI_MOSI = GPIO_NUM_10;
 static const gpio_num_t CONFIG_TFT_SPI_CLOCK = GPIO_NUM_11;
 static const gpio_num_t CONFIG_TFT_BACKLIGHT_PIN = GPIO_NUM_12;
 static const gpio_num_t CONFIG_TFT_SPI_MISO = GPIO_NUM_13;
-static const gpio_num_t CONFIG_TFT_RESET = 46;
+static const gpio_num_t CONFIG_TFT_RESET = GPIO_NUM_46;
 
 static const ledc_mode_t BACKLIGHT_LEDC_MODE = LEDC_LOW_SPEED_MODE;
 static const ledc_channel_t BACKLIGHT_LEDC_CHANNEL = LEDC_CHANNEL_0;
@@ -193,7 +193,7 @@ void initialize_display() {
     ESP_ERROR_CHECK(esp_lcd_panel_init(lcd_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_invert_color(lcd_handle, false));
     ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(lcd_handle, false));
-    ESP_ERROR_CHECK(esp_lcd_panel_mirror(lcd_handle, true, false));
+    ESP_ERROR_CHECK(esp_lcd_panel_mirror(lcd_handle, true, true));
     ESP_ERROR_CHECK(esp_lcd_panel_set_gap(lcd_handle, 0, 0));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(lcd_handle, true));
 }
@@ -230,6 +230,7 @@ void create_demo_ui() {
     // Set the background color of the display to black.
     lv_style_init(&style_screen);
     lv_style_set_bg_color(&style_screen, lv_color_black());
+    lv_style_set_text_color(&style_screen, lv_color_hex(0xFFFFFF));
     lv_obj_add_style(lv_scr_act(), &style_screen, LV_STATE_DEFAULT);
 
         /*Create an Arc*/
@@ -239,6 +240,10 @@ void create_demo_ui() {
     lv_obj_remove_style(arc, NULL, LV_PART_KNOB);   /*Be sure the knob is not displayed*/
     lv_obj_remove_flag(arc, LV_OBJ_FLAG_CLICKABLE);  /*To not allow adjusting by click*/
     lv_obj_center(arc);
+
+    lv_obj_t *label = lv_label_create(scr);
+    lv_label_set_text(label, "Scanning WiFi...");
+    lv_obj_align(label, LV_ALIGN_CENTER, 0, 100);
 
     lv_anim_t a;
     lv_anim_init(&a);
