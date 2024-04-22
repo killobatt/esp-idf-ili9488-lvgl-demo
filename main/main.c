@@ -47,6 +47,8 @@ static const int LVGL_UPDATE_PERIOD_MS = 5;
 #define CONFIG_DISPLAY_COLOR_MODE 0 // 0 for RGB, 1 for BGR
 #define USE_DOUBLE_BUFFERING 1
 
+static SemaphoreHandle_t lvgl_mutex;
+
 static esp_lcd_panel_io_handle_t lcd_io_handle = NULL;
 static esp_lcd_panel_handle_t lcd_handle = NULL;
 
@@ -256,20 +258,38 @@ void create_demo_ui() {
     lv_anim_start(&a);
 }
 
-void app_main(void) {
-    display_brightness_init();
-    display_brightness_set(0);
+static void lvgl_ui_task(void *params) {
+    if (pdTRUE == xSemaphoreTake(lvgl_mutex, 1000)) {
+        display_brightness_init();
+        display_brightness_set(0);
 
-    initialize_spi();
-    initialize_display();
+        initialize_spi();
+        initialize_display();
 
-    initialize_lvgl();
-    create_demo_ui();
+        initialize_lvgl();
+        create_demo_ui();
+        display_brightness_set(100);
 
-    display_brightness_set(100);
+        xSemaphoreGive(lvgl_mutex);
 
-    while (true) {
-        vTaskDelay(pdMS_TO_TICKS(10));
-        lv_timer_handler();
+        while (true) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            if (pdTRUE == xSemaphoreTake(lvgl_mutex, 100)) {
+                lv_timer_handler();
+                
+                xSemaphoreGive(lvgl_mutex);
+            } else {
+                ESP_LOGE(TAG, "Could not take lvgl_mutex for timer");
+            }
+        }
+        
+    } else {
+        ESP_LOGE(TAG, "Could not take lvgl_mutex");
     }
+}
+
+void app_main(void) {
+    lvgl_mutex = xSemaphoreCreateMutex();
+
+    xTaskCreate(lvgl_ui_task, "LVGL UI", 50 * 1024, NULL, tskIDLE_PRIORITY, NULL);
 }
