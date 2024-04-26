@@ -1,0 +1,12 @@
+dependencies:
+  esp_lcd_touch:
+    version: '>=1.0.4'
+  idf:
+    version: '>=4.4'
+description: esp_lcd_touch driver for XPT2046 touch controllers.
+repository: git://github.com/atanisoft/esp_lcd_touch_xpt2046.git
+repository_info:
+  commit_sha: 4e1c9dcf398f308605f4485e1a0b55c2bb3caa56
+  path: .
+url: https://github.com/atanisoft/esp_lcd_touch_xpt2046
+version: 1.0.4

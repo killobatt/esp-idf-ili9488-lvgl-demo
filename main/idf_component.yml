@@ -1,5 +1,6 @@
 ## IDF Component Manager Manifest File
 dependencies:
+  atanisoft/esp_lcd_touch_xpt2046: "^1.0.4"
   lvgl/lvgl: "^9.1.0"
   atanisoft/esp_lcd_ili9488: "^1.0.9"
   ## Required IDF version

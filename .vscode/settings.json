@@ -24,7 +24,10 @@
         "lv_array.h": "c",
         "lv_font.h": "c",
         "cstdint": "c",
-        "esp_wifi.h": "c"
+        "esp_wifi.h": "c",
+        "esp_lcd_panel_io.h": "c",
+        "esp_lcd_panel_vendor.h": "c",
+        "esp_lcd_panel_ops.h": "c"
     },
     "idf.flashType": "UART"
 }

@@ -6,7 +6,9 @@
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_ops.h"
+
 #include "esp_lcd_ili9488.h"
+#include "esp_lcd_touch_xpt2046.h"
 
 #include "lvgl.h"
 
@@ -23,13 +25,26 @@
 
 static const char *TAG = "main";
 
-static const gpio_num_t CONFIG_TFT_CS = GPIO_NUM_3;
-static const gpio_num_t CONFIG_TFT_DC = GPIO_NUM_9;
-static const gpio_num_t CONFIG_TFT_SPI_MOSI = GPIO_NUM_10;
-static const gpio_num_t CONFIG_TFT_SPI_CLOCK = GPIO_NUM_11;
-static const gpio_num_t CONFIG_TFT_BACKLIGHT_PIN = GPIO_NUM_12;
+// ESP-32(s3) supports SPI on any GPIO pins, but it's a slow virtual SPI (VSPI), up to 80Mhz
+// Fast hardware SPI is only supported on IO_MUX PINS, from doc:
+// Pin Name | GPIO Number (SPI2)
+// CS0         10
+// SCLK        12
+// MISO        13
+// MOSI        11
+// QUADWP      14
+// QUADHD      9
+
+static const gpio_num_t CONFIG_TFT_CS = GPIO_NUM_10;
+static const gpio_num_t CONFIG_TFT_DC = GPIO_NUM_8;
+static const gpio_num_t CONFIG_TFT_SPI_MOSI = GPIO_NUM_11;
+static const gpio_num_t CONFIG_TFT_SPI_CLOCK = GPIO_NUM_12;
+static const gpio_num_t CONFIG_TFT_BACKLIGHT_PIN = GPIO_NUM_18;
 static const gpio_num_t CONFIG_TFT_SPI_MISO = GPIO_NUM_13;
 static const gpio_num_t CONFIG_TFT_RESET = GPIO_NUM_46;
+
+static const gpio_num_t CONFIG_TOUCH_CS = GPIO_NUM_17;
+// static const gpio_num_t CONFIG_TOUCH_IRQ = GPIO_NUM_16;
 
 static const ledc_mode_t BACKLIGHT_LEDC_MODE = LEDC_LOW_SPEED_MODE;
 static const ledc_channel_t BACKLIGHT_LEDC_CHANNEL = LEDC_CHANNEL_0;
@@ -57,6 +72,8 @@ static SemaphoreHandle_t lvgl_mutex;
 
 static esp_lcd_panel_io_handle_t lcd_io_handle = NULL;
 static esp_lcd_panel_handle_t lcd_handle = NULL;
+static esp_lcd_touch_handle_t touch_handle = NULL;
+static esp_lcd_panel_io_handle_t touch_panel_io_handle = NULL;
 
 // static lv_disp_draw_buf_t lv_disp_buf;
 // static lv_disp_drv_t lv_disp_drv;
@@ -97,6 +114,27 @@ static void lvgl_flush_cb(
 
 static void IRAM_ATTR lvgl_tick_cb(void *param) {
 	lv_tick_inc(LVGL_UPDATE_PERIOD_MS);
+}
+
+static void lvgl_input_read(lv_indev_t *indev, lv_indev_data_t *data) {
+    uint16_t x[1];
+    uint16_t y[1];
+    uint16_t strength[1];
+    uint8_t count = 0;
+
+    // Update touch point data.
+    ESP_ERROR_CHECK(esp_lcd_touch_read_data(touch_handle));
+
+    data->state = LV_INDEV_STATE_REL;
+
+    if (esp_lcd_touch_get_coordinates(touch_handle, x, y, strength, &count, 1)) {
+        data->point.x = x[0];
+        data->point.y = y[0];
+        data->state = LV_INDEV_STATE_PR;
+        ESP_LOGI(TAG, "Touch: %d %d", x[0], y[0]);
+    }
+
+    data->continue_reading = false;
 }
 
 void display_brightness_init(void) {
@@ -206,6 +244,26 @@ void initialize_display() {
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(lcd_handle, true));
 }
 
+void initialize_touch() {
+    esp_lcd_panel_io_spi_config_t tp_io_config = ESP_LCD_TOUCH_IO_SPI_XPT2046_CONFIG(CONFIG_TOUCH_CS);
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI2_HOST, &tp_io_config, &touch_panel_io_handle));
+
+    esp_lcd_touch_config_t tp_cfg = {
+        .x_max = DISPLAY_HORIZONTAL_PIXELS,
+        .y_max = DISPLAY_VERTICAL_PIXELS,
+        .rst_gpio_num = -1,
+        .int_gpio_num = -1, // CONFIG_TOUCH_IRQ,
+        .flags = {
+            .swap_xy = 0,
+            .mirror_x = true,
+            .mirror_y = false,
+        },
+    };
+
+    ESP_LOGI(TAG, "Initialize touch controller XPT2046");
+    ESP_ERROR_CHECK(esp_lcd_touch_new_spi_xpt2046(touch_panel_io_handle, &tp_cfg, &touch_handle));
+}
+
 void initialize_lvgl() {
     ESP_LOGI(TAG, "Initializing LVGL");
     lv_init();
@@ -230,6 +288,11 @@ void initialize_lvgl() {
     esp_timer_handle_t lvgl_tick_timer = NULL;
     ESP_ERROR_CHECK(esp_timer_create(&lvgl_tick_timer_args, &lvgl_tick_timer));
     ESP_ERROR_CHECK(esp_timer_start_periodic(lvgl_tick_timer, LVGL_UPDATE_PERIOD_MS * 1000));
+
+    /*Register at least one display before you register any input devices*/
+    lvgl_touch_indev = lv_indev_create();
+    lv_indev_set_type(lvgl_touch_indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(lvgl_touch_indev, lvgl_input_read);
 }
 
 void create_demo_ui() {
@@ -271,6 +334,8 @@ static void lvgl_ui_task(void *params) {
 
         initialize_spi();
         initialize_display();
+
+        initialize_touch();
 
         initialize_lvgl();
         create_demo_ui();
